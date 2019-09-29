@@ -31,8 +31,8 @@ import (
 	"github.com/technosophos/moniker"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
-	"k8s.io/api/core/v1"
-	"k8s.io/cli-runtime/pkg/genericclioptions/resource"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/cli-runtime/pkg/resource"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"k8s.io/helm/pkg/helm"
@@ -338,6 +338,20 @@ func TestValidName(t *testing.T) {
 	}
 }
 
+func TestGetAllVersionSet(t *testing.T) {
+	rs := rsFixture()
+	vs, err := GetAllVersionSet(rs.clientset.Discovery())
+	if err != nil {
+		t.Error(err)
+	}
+	if !vs.Has("v1") {
+		t.Errorf("Expected supported versions to at least include v1.")
+	}
+	if vs.Has("nosuchversion/v1") {
+		t.Error("Non-existent version is reported found.")
+	}
+}
+
 func TestGetVersionSet(t *testing.T) {
 	rs := rsFixture()
 	vs, err := GetVersionSet(rs.clientset.Discovery())
@@ -500,6 +514,15 @@ type updateFailingKubeClient struct {
 }
 
 func (u *updateFailingKubeClient) Update(namespace string, originalReader, modifiedReader io.Reader, force bool, recreate bool, timeout int64, shouldWait bool) error {
+	return u.UpdateWithOptions(namespace, originalReader, modifiedReader, kube.UpdateOptions{
+		Force:      force,
+		Recreate:   recreate,
+		Timeout:    timeout,
+		ShouldWait: shouldWait,
+	})
+}
+
+func (u *updateFailingKubeClient) UpdateWithOptions(namespace string, originalReader, modifiedReader io.Reader, opts kube.UpdateOptions) error {
 	return errors.New("Failed update in kube client")
 }
 
@@ -528,6 +551,10 @@ type deleteFailingKubeClient struct {
 }
 
 func (d *deleteFailingKubeClient) Delete(ns string, r io.Reader) error {
+	return kube.ErrNoObjectsVisited
+}
+
+func (d *deleteFailingKubeClient) DeleteWithTimeout(ns string, r io.Reader, timeout int64, shouldWait bool) error {
 	return kube.ErrNoObjectsVisited
 }
 
@@ -603,6 +630,9 @@ func (kc *mockHooksKubeClient) Get(ns string, r io.Reader) (string, error) {
 	return "", nil
 }
 func (kc *mockHooksKubeClient) Delete(ns string, r io.Reader) error {
+	return kc.DeleteWithTimeout(ns, r, 0, false)
+}
+func (kc *mockHooksKubeClient) DeleteWithTimeout(ns string, r io.Reader, timeout int64, shouldWait bool) error {
 	manifest, err := kc.makeManifest(r)
 	if err != nil {
 		return err
@@ -632,14 +662,24 @@ func (kc *mockHooksKubeClient) WatchUntilReady(ns string, r io.Reader, timeout i
 func (kc *mockHooksKubeClient) Update(ns string, currentReader, modifiedReader io.Reader, force bool, recreate bool, timeout int64, shouldWait bool) error {
 	return nil
 }
+func (kc *mockHooksKubeClient) UpdateWithOptions(ns string, currentReader, modifiedReader io.Reader, opts kube.UpdateOptions) error {
+	return nil
+}
 func (kc *mockHooksKubeClient) Build(ns string, reader io.Reader) (kube.Result, error) {
 	return []*resource.Info{}, nil
 }
 func (kc *mockHooksKubeClient) BuildUnstructured(ns string, reader io.Reader) (kube.Result, error) {
 	return []*resource.Info{}, nil
 }
+func (kc *mockHooksKubeClient) Validate(ns string, reader io.Reader) error {
+	return nil
+}
 func (kc *mockHooksKubeClient) WaitAndGetCompletedPodPhase(namespace string, reader io.Reader, timeout time.Duration) (v1.PodPhase, error) {
 	return v1.PodUnknown, nil
+}
+
+func (kc *mockHooksKubeClient) WaitUntilCRDEstablished(reader io.Reader, timeout time.Duration) error {
+	return nil
 }
 
 func deletePolicyStub(kubeClient *mockHooksKubeClient) *ReleaseServer {
